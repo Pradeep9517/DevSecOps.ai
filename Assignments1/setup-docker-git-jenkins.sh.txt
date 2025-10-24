@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# setup-docker-git-jenkins.sh
+# For Ubuntu/Debian. Run as root or with sudo.
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+echo "== Update & prereqs =="
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common unzip
+
+echo "== Install Docker official repo =="
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+arch=$(dpkg --print-architecture)
+echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+  | tee /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+echo "Enable & start docker"
+systemctl enable --now docker
+
+TARGET_USER="${SUDO_USER:-$(whoami)}"
+echo "Adding user ${TARGET_USER} to docker group..."
+usermod -aG docker "$TARGET_USER" || true
+
+echo "== Install Git =="
+apt-get install -y git
+
+echo "== Install Jenkins (Debian/Ubuntu) =="
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
+  | tee /etc/apt/sources.list.d/jenkins.list
+apt-get update -y
+apt-get install -y openjdk-17-jre-headless jenkins
+
+systemctl enable --now jenkins
+
+if command -v ufw >/dev/null 2>&1; then
+  echo "Allowing Jenkins port 8080 through ufw..."
+  ufw allow 8080/tcp || true
+fi
+
+echo "== Verification =="
+echo "Docker version:"
+docker --version || true
+echo "Docker ps (may require relogin for group change):"
+docker run --rm hello-world || true
+
+echo "Git version:"
+git --version || true
+
+echo "Jenkins status (systemctl):"
+systemctl status jenkins --no-pager | sed -n '1,12p' || true
+
+echo "Initial Jenkins password (if present):"
+if [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; then
+  echo "----"
+  sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+else
+  echo "Initial password not found at /var/lib/jenkins/secrets/initialAdminPassword"
+fi
+
+echo "Done. Note: if you were added to docker group, logout/login or run 'newgrp docker'."
